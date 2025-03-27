@@ -1,3 +1,4 @@
+import json
 from fastapi import FastAPI, Request, Form, Depends, HTTPException
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
@@ -22,10 +23,12 @@ DEFAULT_API_BASE = "http://127.0.0.1:1234/v1"
 # 配置LM Studio API地址
 api_base = os.environ.get("LM_STUDIO_API_BASE", DEFAULT_API_BASE)
 
+
 # 定义消息模型
 class Message(BaseModel):
     role: str
     content: str
+
 
 # 构建聊天请求
 class ChatRequest(BaseModel):
@@ -35,86 +38,71 @@ class ChatRequest(BaseModel):
     max_tokens: int = 4096
     stream: bool = False
 
+
 # 构建聊天响应
 class ChatResponse(BaseModel):
     choices: List[dict]
+
 
 # 首页路由
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
-# 聊天API端点
+
 @app.post("/api/chat")
 async def chat(chat_request: ChatRequest):
-    try:
+    from starlette.responses import StreamingResponse
+    async def generate_stream():
         async with httpx.AsyncClient() as client:
-            if chat_request.stream:
-                # 流式响应处理
+            try:
                 async with client.stream(
-                    'POST',
-                    f"{api_base}/chat/completions",
-                    json=chat_request.dict(),
-                    timeout=None
+                        'POST',
+                        f"{api_base}/chat/completions",
+                        json=chat_request.dict(),
+                        timeout=None
                 ) as response:
-                    if response.status_code != 200:
-                        raise HTTPException(status_code=response.status_code, detail=f"LM Studio API error: {response.text}")
-                    # async for chunk in response.aiter_lines():
-                    # 有值，可以正常输出
-                    #     print(chunk)
-                    # str类型
-                    #     print(type(chunk))
-                    from fastapi.responses import StreamingResponse
-                    async def generate():
+                    # 检查响应状态码
+                    response.raise_for_status()
+                    # error_detail = await response.aread()
+                    # error_detail = error_detail.decode() if isinstance(error_detail, bytes) else error_detail
+                    # yield f'data: {{"error": "API返回错误: {response.status_code} - {error_detail}"}}\n\n'
+                    # yield 'data: [DONE]\n\n'
+                    # return
+
+                    # 处理流式数据
+                    async for chunk in response.aiter_lines():
+                        chunk = chunk.strip()
+                        if chunk.startswith('data: '):
+                            chunk = chunk[len('data: '):]
+                        if chunk == "[DONE]":
+                            break  # 结束流
                         try:
-                            async for chunk in response.aiter_lines():
-                                chunk = chunk.replace("data: ", "")
-                                try:
-                                    data = json.loads(chunk)
-                                    if not isinstance(data, dict):
-                                        print(f"Invalid data format: expected dict, got {type(data)}")
-                                        continue
-                                    if 'choices' not in data:
-                                        print(f"Missing 'choices' in response data")
-                                        continue
-                                    yield f"data: {chunk}\n\n"
-                                except json.JSONDecodeError as e:
-                                    print(f"JSON parsing error: {str(e)} in chunk: {chunk}")
-                                except httpx.StreamClosed:
-                                    print("Stream connection closed during data processing")
-                                    break
-                        except httpx.StreamClosed as e:
-                            error_msg = f"Stream connection closed: {str(e)}"
-                            yield f'data: {{"error": "{error_msg}"}}\n\n'
-                        except Exception as e:
-                            error_msg = f"Unexpected streaming error: {str(e)}"
-                            yield f'data: {{"error": "{error_msg}"}}\n\n'
-                        finally:
-                            if not response.is_closed:
-                                yield 'data: [DONE]\n\n'
-                    
-                    return StreamingResponse(
-                        generate(),
-                        media_type="text/event-stream"
-                    )
-            else:
-                # 非流式响应处理
-                response = await client.post(
+                            data = json.loads(chunk)
+                            yield f"data: {json.dumps(data)}\n\n"
+                        except json.JSONDecodeError as e:
+                            yield f'data: {{"error": "JSON解析失败: {str(e)}"}}\n\n'
+            except httpx.RequestError as e:
+                yield f'data: {{"error": "请求异常: {str(e)}"}}\n\n'
+            except Exception as e:
+                yield f'data: {{"error": "未知错误: {str(e)}"}}\n\n'
+            finally:
+                yield 'data: [DONE]\n\n'
+
+    async def get_no_stream():
+        async with httpx.AsyncClient() as client:
+            try:
+                resp = await client.post(
                     f"{api_base}/chat/completions",
                     json=chat_request.dict(),
-                    timeout=None
+                    timeout=120  # 非流式建议设置合理超时
                 )
-                if response.status_code != 200:
-                    raise HTTPException(status_code=response.status_code, detail=f"LM Studio API error: {response.text}")
-                
-                response_data = response.json()
-                if not isinstance(response_data, dict) or 'choices' not in response_data:
-                    raise HTTPException(status_code=500, detail="Invalid response format from LM Studio API")
-                
+                resp.raise_for_status()  # 自动处理非200状态码
+                response_data = resp.json()
                 choices = response_data['choices']
                 if not choices:
                     return {"choices": []}
-                
+
                 processed_choices = []
                 for choice in choices:
                     if 'message' in choice and 'content' in choice['message']:
@@ -126,10 +114,28 @@ async def chat(chat_request: ChatRequest):
                             "index": choice.get('index', 0),
                             "finish_reason": choice.get('finish_reason', None)
                         })
-                
+
                 return {"choices": processed_choices}
-    except httpx.RequestError as e:
-        raise HTTPException(status_code=500, detail=f"Error communicating with LM Studio API: {str(e)}")
+
+            except httpx.HTTPStatusError as e:
+                raise HTTPException(
+                    status_code=e.response.status_code,
+                    detail=f"上游API错误: {e.response.text}"
+                )
+
+    if chat_request.stream:
+        return StreamingResponse(
+            generate_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive"
+            }
+        )
+    else:
+        result = await get_no_stream()
+        return result
+
 
 # 启动服务器
 if __name__ == "__main__":
