@@ -64,11 +64,6 @@ async def chat(chat_request: ChatRequest):
                 ) as response:
                     # 检查响应状态码
                     response.raise_for_status()
-                    # error_detail = await response.aread()
-                    # error_detail = error_detail.decode() if isinstance(error_detail, bytes) else error_detail
-                    # yield f'data: {{"error": "API返回错误: {response.status_code} - {error_detail}"}}\n\n'
-                    # yield 'data: [DONE]\n\n'
-                    # return
 
                     # 处理流式数据
                     async for chunk in response.aiter_lines():
@@ -97,7 +92,7 @@ async def chat(chat_request: ChatRequest):
                     json=chat_request.dict(),
                     timeout=120  # 非流式建议设置合理超时
                 )
-                resp.raise_for_status()  # 自动处理非200状态码
+                resp.raise_for_status()
                 response_data = resp.json()
                 choices = response_data['choices']
                 if not choices:
@@ -126,11 +121,7 @@ async def chat(chat_request: ChatRequest):
     if chat_request.stream:
         return StreamingResponse(
             generate_stream(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive"
-            }
+            media_type="text/event-stream"
         )
     else:
         result = await get_no_stream()
