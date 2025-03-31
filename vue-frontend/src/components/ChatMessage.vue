@@ -1,5 +1,13 @@
 <script setup>
 import { ref } from 'vue';
+import MarkdownIt from 'markdown-it';
+
+// 创建markdown-it实例
+const md = new MarkdownIt({
+  html: false, // 禁用HTML标签
+  breaks: true, // 将\n转换为<br>
+  linkify: true, // 自动转换URL为链接
+});
 
 const props = defineProps({
   role: {
@@ -37,7 +45,7 @@ const toggleThinking = () => {
     </div>
     
     <!-- 消息内容 -->
-    <div>{{ content }}</div>
+    <div v-html="md.render(content)"></div>
   </div>
   
   <!-- 系统消息使用不同的样式 -->

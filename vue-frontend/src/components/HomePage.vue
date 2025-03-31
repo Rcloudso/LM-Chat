@@ -12,6 +12,9 @@ const currentChatTitle = ref('');
 // 控制侧边栏显示/隐藏
 const showSidebar = ref(true);
 
+// 欢迎页面输入框的内容
+const welcomeInput = ref('');
+
 // 根据窗口宽度自动设置侧边栏状态
 const handleResize = () => {
   showSidebar.value = window.innerWidth > 768;
@@ -21,6 +24,25 @@ const handleResize = () => {
 const toggleSidebar = () => {
   showSidebar.value = !showSidebar.value;
 };
+
+// 处理欢迎页面输入框的发送事件
+const handleWelcomeInput = () => {
+  if (welcomeInput.value.trim()) {
+    // 先跳转到聊天界面
+    startNewChat();
+    
+    // 在下一个事件循环中发送消息
+    setTimeout(() => {
+      // 通过ref直接设置ChatInterface的消息内容
+      chatInterfaceRef.value?.setPendingMessage(welcomeInput.value);
+      // 清空输入框
+      welcomeInput.value = '';
+    }, 0);
+  }
+};
+
+// 获取ChatInterface组件的引用
+const chatInterfaceRef = ref(null);
 
 // 开始新对话
 const startNewChat = () => {
@@ -66,17 +88,24 @@ onUnmounted(() => {
             <input 
               type="text" 
               class="welcome-input" 
-              placeholder="给 LM  发送消息"
-              @focus="startNewChat"
+              placeholder="给 LM Chat 发送消息"
+              v-model="welcomeInput"
             >
-            <div class="input-actions">
+            <button 
+              class="btn btn-primary send-button" 
+              @click="handleWelcomeInput"
+              :disabled="!welcomeInput.trim()"
+            >
+              发送
+            </button>
+            <!-- <div class="input-actions">
               <button class="action-button">
                 <span class="action-icon">🔍</span> 示意思考 (R1)
               </button>
               <button class="action-button">
                 <span class="action-icon">🌐</span> 联网搜索
               </button>
-            </div>
+            </div> -->
           </div>
         </div>
       </div>
@@ -86,7 +115,7 @@ onUnmounted(() => {
         <div v-if="currentChatTitle" class="chat-header">
           {{ currentChatTitle }}
         </div>
-        <ChatInterface />
+        <ChatInterface ref="chatInterfaceRef" />
       </div>
     </div>
   </div>
@@ -153,15 +182,35 @@ onUnmounted(() => {
 .input-container {
   width: 100%;
   margin-top: 20px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .welcome-input {
-  width: 100%;
+  flex: 1;
   padding: 12px 16px;
   border: 1px solid #e5e7eb;
   border-radius: 8px;
   font-size: 16px;
-  margin-bottom: 12px;
+  height: 48px;
+  box-sizing: border-box;
+}
+
+.send-button {
+  height: 48px;
+  padding: 0 20px;
+  border-radius: 8px;
+  font-size: 16px;
+  background-color: #3838cc;
+  color: white;
+  border: none;
+  cursor: pointer;
+}
+
+.send-button:disabled {
+  background-color: #a0a0a0;
+  cursor: not-allowed;
 }
 
 .welcome-input:focus {
@@ -200,60 +249,35 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   height: 100%;
+  overflow: hidden;
 }
 
 .chat-header {
   padding: 12px 20px;
-  font-size: 16px;
-  font-weight: 600;
   border-bottom: 1px solid #e5e7eb;
-  background-color: #ffffff;
+  font-weight: 600;
+  color: #333;
+  background-color: #f9fafb;
 }
 
-/* 响应式布局 */
-@media (max-width: 992px) {
-  .welcome-content {
-    max-width: 90%;
-  }
-  
-  .input-actions {
-    flex-direction: column;
-    gap: 8px;
-  }
-  
-  .action-button {
-    width: 100%;
-  }
+.full-width {
+  margin-left: 0;
 }
 
 @media (max-width: 768px) {
   .sidebar-container {
     position: absolute;
     height: 100%;
-    left: 0;
-    top: 0;
+    z-index: 1000;
+    transform: translateX(-100%);
   }
   
-  .full-width {
+  .sidebar-container.visible {
+    transform: translateX(0);
+  }
+  
+  .main-content {
     margin-left: 0;
-  }
-  
-  .welcome-content {
-    padding: 0 15px;
-  }
-}
-
-@media (max-width: 576px) {
-  .welcome-title {
-    font-size: 24px;
-  }
-  
-  .welcome-description {
-    font-size: 14px;
-  }
-  
-  .welcome-input {
-    padding: 10px 12px;
   }
 }
 </style>
