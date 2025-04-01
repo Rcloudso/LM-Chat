@@ -11,6 +11,7 @@ const isStreaming = ref(true);
 const temperature = ref(0.8);
 const maxTokens = ref(2048);
 const isLoading = ref(false);
+const currentChatId = ref(null);
 
 // 定义方法供父组件设置待发送消息
 const setPendingMessage = (message) => {
@@ -18,15 +19,63 @@ const setPendingMessage = (message) => {
   sendMessage();
 };
 
+// 刷新侧边栏（通知父组件更新对话列表）
+const refreshSidebar = () => {
+  setTimeout(() => {
+    const event = new CustomEvent('refresh-sidebar');
+    window.dispatchEvent(event);
+  }, 500);
+};
+
+// 更新当前对话ID（用于新对话）
+const updateCurrentChatId = async () => {
+  if (currentChatId.value !== null) return;
+
+  try {
+    const response = await axios.get('/api/chats');
+    if (response.data && Array.isArray(response.data) && response.data.length > 0) {
+      const latestChat = response.data[0];
+      currentChatId.value = latestChat.id;
+      console.log('已更新当前对话ID:', currentChatId.value);
+    }
+  } catch (error) {
+    console.error('获取最新对话ID失败:', error);
+  }
+};
+
+// 加载特定对话的历史消息
+const loadChatHistory = async (chatId) => {
+  if (!chatId) return;
+
+  try {
+    isLoading.value = true;
+    const response = await axios.get(`/api/chats/${chatId}`);
+    if (response.data && response.data.messages) {
+      chatHistory.value = [];
+      currentChatId.value = chatId;
+      chatHistory.value = response.data.messages;
+    }
+  } catch (error) {
+    console.error('加载对话历史失败:', error);
+    ElMessage.error('加载对话历史失败');
+  } finally {
+    isLoading.value = false;
+
+    // 如果是新对话，刷新侧边栏
+    if (currentChatId.value === null) {
+      refreshSidebar();
+    }
+  }
+};
+
 // 暴露方法给父组件
 defineExpose({
-  setPendingMessage
+  setPendingMessage,
+  loadChatHistory
 });
 
-// 聊天容器引用
 const chatContainer = ref(null);
 
-// 添加系统欢迎消息
 onMounted(() => {
   chatHistory.value.push({
     role: 'assistant',
@@ -48,16 +97,6 @@ const scrollToBottom = () => {
   }
 };
 
-// 清空聊天历史
-const clearChat = () => {
-  chatHistory.value = [];
-  // 添加欢迎消息
-  chatHistory.value.push({
-    role: 'assistant',
-    content: '聊天已清空，请输入新的问题。'
-  });
-};
-
 // 处理流式响应
 const handleStreamResponse = async (response) => {
   const reader = response.body.getReader();
@@ -72,7 +111,7 @@ const handleStreamResponse = async (response) => {
   // 创建渲染控制器
   let renderQueue = [];
   let animationFrameId = null;
-  
+
   const render = () => {
     if (renderQueue.length > 0) {
       assistantMessage.content += renderQueue.join('');
@@ -81,12 +120,12 @@ const handleStreamResponse = async (response) => {
     animationFrameId = requestAnimationFrame(render);
   };
   animationFrameId = requestAnimationFrame(render);
-  
+
   try {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      
+
       const chunk = decoder.decode(value, { stream: true });
       buffer += chunk;
       const lines = chunk.split('\n');
@@ -110,7 +149,7 @@ const handleStreamResponse = async (response) => {
         }
       }
     }
-    
+
     // 处理最后可能剩余的buffer数据
     if (buffer && buffer.startsWith('data: ')) {
       try {
@@ -133,6 +172,9 @@ const handleStreamResponse = async (response) => {
     if (animationFrameId) {
       cancelAnimationFrame(animationFrameId);
     }
+
+    // 更新当前对话ID（如果是新对话）
+    await updateCurrentChatId();
   }
 };
 
@@ -147,6 +189,9 @@ const handleNonStreamResponse = async (requestData) => {
         role: 'assistant',
         content: data.choices[0].message.content
       });
+
+      // 更新当前对话ID（如果是新对话）
+      await updateCurrentChatId();
     } else {
       throw new Error('响应数据格式不正确');
     }
@@ -158,11 +203,10 @@ const handleNonStreamResponse = async (requestData) => {
 
 // 发送消息
 const sendMessage = async () => {
-  // 验证并处理用户输入
   const message = userInput.value.trim();
   if (!message) return;
-  
-  // 防止XSS攻击的简单处理
+
+  // 防止XSS攻击
   const sanitizedMessage = message
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
@@ -175,9 +219,10 @@ const sendMessage = async () => {
   // 准备请求数据
   const requestData = {
     messages: chatHistory.value.filter(msg => msg.role !== 'system'),
-    temperature: Number(temperature.value), // 确保是数字类型
-    max_tokens: Number(maxTokens.value), // 确保是数字类型
-    stream: isStreaming.value
+    temperature: Number(temperature.value),
+    max_tokens: Number(maxTokens.value),
+    stream: isStreaming.value,
+    chat_id: currentChatId.value
   };
 
   // 添加一个临时的加载消息
@@ -185,35 +230,33 @@ const sendMessage = async () => {
   chatHistory.value.push({ role: 'assistant', content: '...', isLoading: true });
 
   try {
+    // 移除临时加载消息
+    chatHistory.value.pop();
+
     if (isStreaming.value) {
-      // 使用fetch API处理流式响应
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestData)
       });
 
-      // 检查响应状态
       if (!response.ok) {
         throw new Error(`API请求失败: ${response.statusText}`);
       }
 
-      // 移除加载消息
-      chatHistory.value.pop();
       await handleStreamResponse(response);
     } else {
-      // 移除加载消息并处理非流式响应
-      chatHistory.value.pop();
       await handleNonStreamResponse(requestData);
+    }
+
+    // 更新对话ID并刷新侧边栏（如果是新对话）
+    if (currentChatId.value === null) {
+      await updateCurrentChatId();
+      refreshSidebar();
     }
   } catch (error) {
     console.error('消息发送错误:', error);
-    
-    // 移除加载消息（如果还存在）
-    if (chatHistory.value[loadingMessageIndex]?.isLoading) {
-      chatHistory.value.pop();
-    }
-    
+
     // 显示错误消息
     ElMessage.error(`发生错误: ${error.message}`);
     chatHistory.value.push({
@@ -231,9 +274,6 @@ const sendMessage = async () => {
     <div class="card">
       <div class="card-header d-flex justify-content-between align-items-center">
         <h3 class="mb-0">LM Chat</h3>
-        <button class="btn btn-sm btn-outline-secondary" @click="clearChat" title="清空聊天历史">
-          清空
-        </button>
       </div>
       <div class="card-body">
         <!-- 聊天消息容器 -->
@@ -310,7 +350,6 @@ const sendMessage = async () => {
   overflow-y: auto;
 }
 
-/* 设置区域样式 */
 .settings-row {
   display: flex;
   flex-wrap: wrap;
@@ -344,7 +383,6 @@ const sendMessage = async () => {
   white-space: nowrap;
 }
 
-/* 响应式布局 */
 @media (max-width: 992px) {
   .chat-interface {
     padding: 10px;

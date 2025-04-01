@@ -1,127 +1,121 @@
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue';
+import { ref, onMounted, onUnmounted, nextTick } from 'vue';
 import Sidebar from './Sidebar.vue';
 import ChatInterface from './ChatInterface.vue';
 
-// 控制是否显示聊天界面（首次访问显示欢迎页面，开始对话后显示聊天界面）
-const showChatInterface = ref(false);
+// 组件状态管理
+const chatState = ref({
+  show: false,
+  title: ''
+});
+const sidebarVisible = ref(window.innerWidth > 768);
+const inputText = ref('');
 
-// 当前选中的对话标题
-const currentChatTitle = ref('');
+// 组件引用
+const chatRef = ref(null);
+const sidebarRef = ref(null);
 
-// 控制侧边栏显示/隐藏
-const showSidebar = ref(true);
+// 侧边栏控制
+const toggleSidebar = () => sidebarVisible.value = !sidebarVisible.value;
 
-// 欢迎页面输入框的内容
-const welcomeInput = ref('');
-
-// 根据窗口宽度自动设置侧边栏状态
-const handleResize = () => {
-  showSidebar.value = window.innerWidth > 768;
-};
-
-// 切换侧边栏显示/隐藏
-const toggleSidebar = () => {
-  showSidebar.value = !showSidebar.value;
-};
-
-// 处理欢迎页面输入框的发送事件
-const handleWelcomeInput = () => {
-  if (welcomeInput.value.trim()) {
-    // 先跳转到聊天界面
-    startNewChat();
+// 聊天界面控制
+const chatActions = {
+  // 开始新对话
+  start: () => {
+    chatState.value.show = true;
+    chatState.value.title = '';
+  },
+  
+  // 重置对话
+  reset: () => {
+    chatState.value.show = false;
+    chatState.value.title = '';
+    inputText.value = '';
+  },
+  
+  // 加载历史对话
+  loadHistory: (chatId, title) => {
+    chatState.value.show = true;
+    chatState.value.title = title;
+    nextTick(() => chatRef.value?.loadChatHistory(chatId));
+  },
+  
+  // 处理输入发送
+  sendInput: () => {
+    if (!inputText.value.trim()) return;
     
-    // 在下一个事件循环中发送消息
-    setTimeout(() => {
-      // 通过ref直接设置ChatInterface的消息内容
-      chatInterfaceRef.value?.setPendingMessage(welcomeInput.value);
-      // 清空输入框
-      welcomeInput.value = '';
-    }, 0);
+    chatActions.start();
+    
+    nextTick(() => {
+      chatRef.value?.setPendingMessage(inputText.value);
+      inputText.value = '';
+      
+      // 延迟刷新侧边栏历史对话列表
+      setTimeout(() => sidebarRef.value?.loadHistoryChats(), 1000);
+    });
   }
 };
 
-// 获取ChatInterface组件的引用
-const chatInterfaceRef = ref(null);
+// 响应式布局处理
+const handleResize = () => sidebarVisible.value = window.innerWidth > 768;
 
-// 开始新对话
-const startNewChat = () => {
-  showChatInterface.value = true;
-  currentChatTitle.value = '';
-};
+// 侧边栏刷新处理
+const refreshSidebar = () => sidebarRef.value?.loadHistoryChats();
 
-// 加载历史对话
-const loadHistoryChat = (chatId, title) => {
-  showChatInterface.value = true;
-  currentChatTitle.value = title;
-  // 这里可以添加加载历史对话的逻辑
-};
-
-// 监听窗口大小变化
+// 生命周期钩子
 onMounted(() => {
   handleResize();
   window.addEventListener('resize', handleResize);
+  window.addEventListener('refresh-sidebar', refreshSidebar);
 });
 
 onUnmounted(() => {
   window.removeEventListener('resize', handleResize);
+  window.removeEventListener('refresh-sidebar', refreshSidebar);
 });
 </script>
 
 <template>
   <div class="home-container">
     <!-- 侧边栏 -->
-    <div class="sidebar-container">
-      <Sidebar :isSidebarVisible="showSidebar" @new-chat="startNewChat" @load-chat="loadHistoryChat" @toggle-sidebar="toggleSidebar" />
+    <div class="sidebar-container" :class="{ 'visible': sidebarVisible }">
+      <Sidebar ref="sidebarRef" :isSidebarVisible="sidebarVisible" 
+        @new-chat="chatActions.reset" 
+        @load-chat="chatActions.loadHistory" 
+        @toggle-sidebar="toggleSidebar" />
     </div>
-    
+
     <!-- 主内容区域 -->
-    <div class="main-content" :class="{ 'full-width': !showSidebar }">
+    <div class="main-content" :class="{ 'full-width': !sidebarVisible }">
       <!-- 欢迎页面 -->
-      <div v-if="!showChatInterface" class="welcome-page">
+      <div v-if="!chatState.show" class="welcome-page">
         <div class="welcome-content">
           <div class="welcome-icon">🤖</div>
           <h1 class="welcome-title">我是 LM Chat, 很高兴见到你!</h1>
           <p class="welcome-description">我可以帮你写代码、读文件、写作各种创意内容，请把你的任务交给我吧~</p>
-          
+
           <div class="input-container">
-            <input 
-              type="text" 
-              class="welcome-input" 
-              placeholder="给 LM Chat 发送消息"
-              v-model="welcomeInput"
-            >
-            <button 
-              class="btn btn-primary send-button" 
-              @click="handleWelcomeInput"
-              :disabled="!welcomeInput.trim()"
-            >
+            <input type="text" class="welcome-input" placeholder="给 LM Chat 发送消息" v-model="inputText">
+            <button class="btn btn-primary send-button" @click="chatActions.sendInput" :disabled="!inputText.trim()">
               发送
             </button>
-            <!-- <div class="input-actions">
-              <button class="action-button">
-                <span class="action-icon">🔍</span> 示意思考 (R1)
-              </button>
-              <button class="action-button">
-                <span class="action-icon">🌐</span> 联网搜索
-              </button>
-            </div> -->
           </div>
         </div>
       </div>
-      
+
       <!-- 聊天界面 -->
       <div v-else class="chat-page">
-        <div v-if="currentChatTitle" class="chat-header">
-          {{ currentChatTitle }}
+        <div v-if="chatState.title" class="chat-header">
+          {{ chatState.title }}
         </div>
-        <ChatInterface ref="chatInterfaceRef" />
+        <ChatInterface ref="chatRef" />
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
+/* 布局容器 */
 .home-container {
   display: flex;
   width: 100%;
@@ -131,13 +125,14 @@ onUnmounted(() => {
   overflow: hidden;
 }
 
+/* 侧边栏 */
 .sidebar-container {
   position: relative;
   z-index: 10;
   transition: transform 0.3s ease;
 }
 
-
+/* 主内容区域 */
 .main-content {
   flex: 1;
   display: flex;
@@ -146,6 +141,7 @@ onUnmounted(() => {
   transition: all 0.3s ease;
 }
 
+/* 欢迎页面 */
 .welcome-page {
   display: flex;
   flex-direction: column;
@@ -179,6 +175,7 @@ onUnmounted(() => {
   line-height: 1.5;
 }
 
+/* 输入区域 */
 .input-container {
   width: 100%;
   margin-top: 20px;
@@ -197,6 +194,13 @@ onUnmounted(() => {
   box-sizing: border-box;
 }
 
+.welcome-input:focus {
+  outline: none;
+  border-color: #6f9dec;
+  box-shadow: 0 0 0 2px rgba(111, 157, 236, 0.2);
+}
+
+/* 按钮样式 */
 .send-button {
   height: 48px;
   padding: 0 20px;
@@ -206,6 +210,11 @@ onUnmounted(() => {
   color: white;
   border: none;
   cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.send-button:hover {
+  background-color: #2d2db3;
 }
 
 .send-button:disabled {
@@ -213,38 +222,7 @@ onUnmounted(() => {
   cursor: not-allowed;
 }
 
-.welcome-input:focus {
-  outline: none;
-  border-color: #6f9dec;
-  box-shadow: 0 0 0 2px rgba(111, 157, 236, 0.2);
-}
-
-.input-actions {
-  display: flex;
-  justify-content: center;
-  gap: 12px;
-}
-
-.action-button {
-  display: flex;
-  align-items: center;
-  padding: 8px 12px;
-  background-color: #f5f5f5;
-  border: none;
-  border-radius: 6px;
-  font-size: 14px;
-  color: #666;
-  cursor: pointer;
-}
-
-.action-button:hover {
-  background-color: #e9e9e9;
-}
-
-.action-icon {
-  margin-right: 6px;
-}
-
+/* 聊天界面 */
 .chat-page {
   display: flex;
   flex-direction: column;
@@ -264,6 +242,7 @@ onUnmounted(() => {
   margin-left: 0;
 }
 
+/* 响应式布局 */
 @media (max-width: 768px) {
   .sidebar-container {
     position: absolute;
@@ -271,11 +250,11 @@ onUnmounted(() => {
     z-index: 1000;
     transform: translateX(-100%);
   }
-  
+
   .sidebar-container.visible {
     transform: translateX(0);
   }
-  
+
   .main-content {
     margin-left: 0;
   }

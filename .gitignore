@@ -23,3 +23,9 @@ dist-ssr
 *.sln
 *.sw?
 __pycache__/main.cpython-38.pyc
+__pycache__/models.cpython-38.pyc
+__pycache__/routes.cpython-38.pyc
+main_business/__pycache__/__init__.cpython-38.pyc
+main_business/__pycache__/app.cpython-38.pyc
+main_business/__pycache__/models.cpython-38.pyc
+main_business/__pycache__/routes.cpython-38.pyc

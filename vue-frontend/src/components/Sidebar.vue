@@ -1,7 +1,8 @@
 <script setup>
-import { ref, defineEmits, defineProps } from 'vue';
+import { ref, defineEmits, defineProps, onMounted } from 'vue';
+import axios from 'axios';
+import { ElMessage } from 'element-plus';
 
-// 定义属性
 const props = defineProps({
   isSidebarVisible: {
     type: Boolean,
@@ -9,83 +10,100 @@ const props = defineProps({
   }
 });
 
-// 定义事件
-const emit = defineEmits(['toggle-sidebar']);
+const emit = defineEmits(['toggle-sidebar', 'new-chat', 'load-chat']);
 
-// 模拟历史对话数据
-const historyChats = ref([
-  {
-    id: 1,
-    title: '微信生日祝福模板设计',
-    date: '昨天'
-  },
-  {
-    id: 2,
-    title: 'BOSS直聘测试工程师招聘技巧',
-    date: '30 天内'
-  },
-  {
-    id: 3,
-    title: '婚礼父母感谢词简洁温馨模板',
-    date: '30 天内'
-  },
-  {
-    id: 4,
-    title: '婚礼献花给父母致辞建议',
-    date: '30 天内'
-  },
-  {
-    id: 5,
-    title: '宝玉珠测试工程师简历优化建议',
-    date: '30 天内'
-  },
-  {
-    id: 6,
-    title: '而且也不是一次，我之前没得病',
-    date: '30 天内'
-  },
-  {
-    id: 7,
-    title: '婚前工作态度与纪律问题反映处理',
-    date: '30 天内'
-  },
-  {
-    id: 8,
-    title: '写给媳妇的情书与思念信',
-    date: '2025-02'
-  },
-  {
-    id: 9,
-    title: '新郎父亲结婚典礼讲话稿',
-    date: '2025-02'
-  }
-]);
-
-// 当前选中的对话ID
+// 定义状态
+const historyChats = ref([]);
 const selectedChatId = ref(null);
 
-// 选择对话
+// 格式化日期
+const formatChatDate = (dateString) => {
+  const date = new Date(dateString);
+  const now = new Date();
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+
+  if (date.toDateString() === now.toDateString()) {
+    return '今天';
+  } else if (date.toDateString() === yesterday.toDateString()) {
+    return '昨天';
+  } else if (now.getTime() - date.getTime() < 30 * 24 * 60 * 60 * 1000) {
+    return '30 天内';
+  } else {
+    return `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}`;
+  }
+};
+
+// 加载聊天历史
+const loadHistoryChats = async () => {
+  try {
+    const response = await axios.get('/api/chats');
+    if (response.data && Array.isArray(response.data)) {
+      historyChats.value = response.data.map(chat => ({
+        ...chat,
+        date: formatChatDate(chat.updated_at)
+      }));
+    }
+  } catch (error) {
+    console.error('加载历史对话失败:', error);
+    ElMessage.error('加载历史对话失败');
+  }
+};
+
+// 聊天记录选择
 const selectChat = (id) => {
   selectedChatId.value = id;
-  // 这里可以触发事件通知父组件加载对应的聊天记录
+  const chat = historyChats.value.find(c => c.id === id);
+  if (chat) {
+    emit('load-chat', id, chat.title);
+  }
 };
 
-// 新建对话
 const createNewChat = () => {
-  // 这里可以触发事件通知父组件创建新对话
+  // Reset selection and trigger new chat event
   selectedChatId.value = null;
+  emit('new-chat');
+  
+  // 加载历史对话增加延迟
+  setTimeout(loadHistoryChats, 500);
 };
 
-// 暴露给父组件的方法和属性
+const deleteChat = async (id, event) => {
+  event.stopPropagation();
+
+  try {
+    await axios.delete(`/api/chats/${id}`);
+    
+    if (selectedChatId.value === id) {
+      selectedChatId.value = null;
+      emit('new-chat');
+    }
+    
+    await loadHistoryChats();
+    ElMessage.success('删除成功');
+  } catch (error) {
+    console.error('删除对话失败:', error);
+    ElMessage.error('删除对话失败');
+  }
+};
+
+// 展示管理员提示，未做登录
+const showAdminAlert = () => {
+  alert('您是管理员！');
+};
+
+onMounted(loadHistoryChats);
+
+// 给父组件暴露方法
 defineExpose({
   selectedChatId,
-  createNewChat
+  createNewChat,
+  loadHistoryChats
 });
 </script>
 
 <template>
   <div>
-    <!-- 侧边栏主体 -->
     <div class="sidebar" :class="{ 'sidebar-hidden': !isSidebarVisible }">
       <div class="sidebar-header">
         <div class="logo">LM Chat</div>
@@ -93,64 +111,58 @@ defineExpose({
           <span>☰</span>
         </button>
       </div>
-    
-    <button class="new-chat-button" @click="createNewChat">
-      <i class="icon">+</i> 开启新对话
+
+      <button class="new-chat-button" @click="createNewChat">
+        <i class="icon">+</i> 开启新对话
+      </button>
+
+      <div class="history-container">
+        <!-- Empty state -->
+        <div v-if="historyChats.length === 0" class="empty-history">
+          <p>暂无历史对话</p>
+        </div>
+
+        <!-- Group chats by date category -->
+        <template v-for="dateGroup in ['今天', '昨天', '30 天内']">
+          <div v-if="historyChats.filter(c => c.date === dateGroup).length > 0" class="date-group" :key="dateGroup">
+            <div class="date-label">{{ dateGroup }}</div>
+            <div v-for="chat in historyChats.filter(c => c.date === dateGroup)" :key="chat.id"
+              :class="['chat-item', { 'active': selectedChatId === chat.id }]" @click="selectChat(chat.id)">
+              <span class="chat-title">{{ chat.title }}</span>
+              <button class="delete-btn" @click="deleteChat(chat.id, $event)" title="删除对话">
+                <span>×</span>
+              </button>
+            </div>
+          </div>
+        </template>
+
+        <!-- Earlier chats (grouped by month) -->
+        <template
+          v-for="dateGroup in [...new Set(historyChats.filter(c => !['今天', '昨天', '30 天内'].includes(c.date)).map(c => c.date))]">
+          <div v-if="historyChats.filter(c => c.date === dateGroup).length > 0" class="date-group" :key="dateGroup">
+            <div class="date-label">{{ dateGroup }}</div>
+            <div v-for="chat in historyChats.filter(c => c.date === dateGroup)" :key="chat.id"
+              :class="['chat-item', { 'active': selectedChatId === chat.id }]" @click="selectChat(chat.id)">
+              <span class="chat-title">{{ chat.title }}</span>
+              <button class="delete-btn" @click="deleteChat(chat.id, $event)" title="删除对话">
+                <span>×</span>
+              </button>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <div class="sidebar-footer">
+        <button class="user-profile" @click="showAdminAlert">
+          <i class="icon">👤</i> 个人信息
+        </button>
+      </div>
+    </div>
+
+    <button v-if="!isSidebarVisible" class="expand-button" @click="emit('toggle-sidebar')">
+      <span>☰</span>
     </button>
-    
-    <div class="history-container">
-      <div class="date-group">
-        <div class="date-label">昨天</div>
-        <div 
-          v-for="chat in historyChats.filter(c => c.date === '昨天')" 
-          :key="chat.id"
-          :class="['chat-item', { 'active': selectedChatId === chat.id }]"
-          @click="selectChat(chat.id)"
-        >
-          {{ chat.title }}
-        </div>
-      </div>
-      
-      <div class="date-group">
-        <div class="date-label">30 天内</div>
-        <div 
-          v-for="chat in historyChats.filter(c => c.date === '30 天内')" 
-          :key="chat.id"
-          :class="['chat-item', { 'active': selectedChatId === chat.id }]"
-          @click="selectChat(chat.id)"
-        >
-          {{ chat.title }}
-        </div>
-      </div>
-      
-      <div class="date-group">
-        <div class="date-label">2025-02</div>
-        <div 
-          v-for="chat in historyChats.filter(c => c.date === '2025-02')" 
-          :key="chat.id"
-          :class="['chat-item', { 'active': selectedChatId === chat.id }]"
-          @click="selectChat(chat.id)"
-        >
-          {{ chat.title }}
-        </div>
-      </div>
-    </div>
-    
-    <div class="sidebar-footer">
-      <button class="app-download">
-        <i class="icon">📱</i> 下载 App <span class="new-badge">NEW</span>
-      </button>
-      <button class="user-profile">
-        <i class="icon">👤</i> 个人信息
-      </button>
-    </div>
   </div>
-  
-  <!-- 侧边栏收起时显示的展开按钮 -->
-  <button v-if="!isSidebarVisible" class="expand-button" @click="emit('toggle-sidebar')">
-    <span>☰</span>
-  </button>
-</div>
 </template>
 
 <style scoped>
@@ -265,9 +277,16 @@ defineExpose({
   border-radius: 6px;
   font-size: 14px;
   cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.chat-title {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  flex: 1;
 }
 
 .chat-item:hover {
@@ -279,12 +298,45 @@ defineExpose({
   color: #1890ff;
 }
 
+.delete-btn {
+  visibility: hidden;
+  background: none;
+  border: none;
+  color: #999;
+  cursor: pointer;
+  font-size: 16px;
+  padding: 0 4px;
+  margin-left: 8px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+}
+
+.chat-item:hover .delete-btn {
+  visibility: visible;
+}
+
+.delete-btn:hover {
+  background-color: rgba(0, 0, 0, 0.1);
+  color: #ff4d4f;
+}
+
+.empty-history {
+  padding: 20px;
+  text-align: center;
+  color: #999;
+  font-size: 14px;
+}
+
 .sidebar-footer {
   padding: 16px;
   border-top: 1px solid #e5e7eb;
 }
 
-.app-download, .user-profile {
+.user-profile {
   display: flex;
   align-items: center;
   width: 100%;
@@ -298,21 +350,11 @@ defineExpose({
   cursor: pointer;
 }
 
-.app-download:hover, .user-profile:hover {
+.user-profile:hover {
   background-color: #f0f0f0;
   border-radius: 6px;
 }
 
-.new-badge {
-  background-color: #ff4d4f;
-  color: white;
-  font-size: 10px;
-  padding: 2px 6px;
-  border-radius: 10px;
-  margin-left: 8px;
-}
-
-/* 响应式布局 */
 @media (max-width: 992px) {
   .sidebar {
     width: 220px;
@@ -334,11 +376,11 @@ defineExpose({
     width: 100%;
     max-width: 280px;
   }
-  
+
   .new-chat-button {
     margin: 12px;
   }
-  
+
   .sidebar-footer {
     padding: 12px;
   }
